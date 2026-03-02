@@ -8,7 +8,7 @@ from datetime import datetime
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = ""
+GEMINI_API_KEY = ""  # Isi nanti saat Fase 2
 
 # Endpoint API Binance (Public & Gratis)
 BINANCE_API = "https://api.binance.com/api/v3/klines"

@@ -47,7 +47,8 @@ def get_crypto_data(symbol, interval='5m', limit=50):
             data = response.json()
             
             # Cek jika response kosong atau error dari Binance
-            if isinstance(data, dict) and 'code' in data:                print(f"  ❌ Binance API Error: {data}")
+            if isinstance(data, dict) and 'code' in data:                
+                print(f"  ❌ Binance API Error: {data}")
                 return None
                 
             if not data or len(data) == 0:

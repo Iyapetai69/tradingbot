@@ -110,7 +110,7 @@ def test_gemini_ai():
     start_time = time.time()
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         
         prompt = "Respond ONLY with this JSON: {\"status\": \"ok\"}"
         # Gunakan request_options untuk setting timeout

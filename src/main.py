@@ -1,149 +1,155 @@
-import os
-import time
 import requests
 import pandas as pd
 import numpy as np
+import time
 from datetime import datetime
 
 # ==========================================
-# KONFIGURASI
+# KONFIGURASI & CONSTANTS
 # ==========================================
-# Disarankan menggunakan Environment Variables untuk keamanan
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = ""  # Reserved for Phase 2
+GEMINI_API_KEY = ""  # Untuk Fase 2
 
-CRYPTOCOMPARE_API = "https://min-api.cryptocompare.com/data/v2/histominute"
+API_URL = "https://min-api.cryptocompare.com/data/v2/histominute"
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 }
 
 # ==========================================
-# FUNGSI UTILITAS DATA
+# FUNGSI UTILITAS
 # ==========================================
 
 def parse_symbol(symbol):
-    """Memisahkan pair symbol secara dinamis."""
+    """Parse symbol MT5 ke format CryptoCompare (fsym/tsym)"""
+    symbol = symbol.upper()
     if symbol.endswith('USDT'):
         return symbol.replace('USDT', ''), 'USDT'
-    if symbol.endswith('USD'):
+    elif symbol.endswith('USD'):
         return symbol.replace('USD', ''), 'USD'
+    
+    # Fallback default
     return symbol[:3], symbol[3:]
 
-def get_crypto_data(symbol, limit=50):
-    """Mengambil dan membersihkan data OHLCV dari CryptoCompare."""
+def calculate_ema(series, period):
+    """Menghitung Exponential Moving Average"""
+    return series.ewm(span=period, adjust=False).mean()
+
+def send_telegram(message):
+    """Mengirim pesan ke Telegram dengan penanganan error"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        res = requests.post(url, json=payload, headers=HEADERS, timeout=10)
+        res.raise_for_status()
+        print("  ✅ Telegram: Pesan terkirim.")
+        return True
+    except Exception as e:
+        print(f"  ❌ Telegram Error: {e}")
+        return False
+
+# ==========================================
+# CORE LOGIC
+# ==========================================
+
+def fetch_ohlcv(symbol, limit=100):
+    """Mengambil data market dari API"""
     fsym, tsym = parse_symbol(symbol)
     params = {
         'fsym': fsym,
         'tsym': tsym,
         'limit': limit,
-        'aggregate': 1
+        'aggregate': 5 # 5-minute intervals (sesuai kebutuhan strategi M5)
     }
-    
+
     for attempt in range(3):
         try:
-            print(f"  📡 Request {symbol} (percobaan {attempt + 1})...")
-            resp = requests.get(CRYPTOCOMPARE_API, params=params, headers=HEADERS, timeout=15)
-            
-            if resp.status_code != 200:
-                time.sleep(2 ** attempt)
-                continue
-            
+            print(f"  📡 Fetching {fsym}/{tsym} (Attempt {attempt+1})...")
+            resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=15)
             data = resp.json()
-            if data.get('Response') == 'Error' or 'Data' not in data:
-                print(f"  ❌ API Error: {data.get('Message')}")
+
+            if data.get('Response') == 'Error':
+                print(f"  ⚠️ API Error: {data.get('Message')}")
                 return None
-            
-            # Extract & Convert to DataFrame
-            candles = data['Data']['Data']
-            df = pd.DataFrame(candles)
-            
-            # Formatting Columns
+
+            raw_data = data.get('Data', {}).get('Data', [])
+            if not raw_data:
+                continue
+
+            df = pd.DataFrame(raw_data)
             df = df.rename(columns={'volumefrom': 'volume'})
+            
+            # Convert types
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
-            df = df.dropna(subset=['close'])
-            print(f"  ✅ Berhasil memuat {len(df)} baris data.")
-            return df
-            
+            return df.dropna()
+
         except Exception as e:
-            print(f"  ⚠️ Error: {e}")
-            time.sleep(2 ** attempt)
-            
+            print(f"  ❌ Network Error: {e}")
+            time.sleep(2)
+    
     return None
 
-# ==========================================
-# FUNGSI TEKNIKAL & SINYAL
-# ==========================================
-
-def calculate_ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
-
-def check_ema_cross(df):
-    """Logika Golden Cross & Death Cross."""
-    df['ema_8'] = calculate_ema(df['close'], 8)
-    df['ema_14'] = calculate_ema(df['close'], 14)
-    
-    curr = df.iloc[-1]
-    prev = df.iloc[-2]
-    
-    # Deteksi Cross
-    if prev['ema_8'] <= prev['ema_14'] and curr['ema_8'] > curr['ema_14']:
-        return "POTENSI BUY (Golden Cross)", "🟢", curr
-    elif prev['ema_8'] >= prev['ema_14'] and curr['ema_8'] < curr['ema_14']:
-        return "POTENSI SELL (Death Cross)", "🔴", curr
-    
-    return "MONITORING", "👀", curr
-
-# ==========================================
-# NOTIFIKASI
-# ==========================================
-
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"❌ Gagal kirim Telegram: {e}")
-
-# ==========================================
-# ALUR UTAMA
-# ==========================================
-
 def analyze_market(symbol):
-    print(f"🔄 Menganalisis {symbol}...")
-    df = get_crypto_data(symbol)
-    
-    if df is None or df.empty:
-        send_telegram(f"❌ *ERROR:* Gagal mengambil data `{symbol}`")
+    """Logika analisis teknikal dan pengiriman sinyal"""
+    print(f"\n🔍 Analisis {symbol} dimulai...")
+    df = fetch_ohlcv(symbol)
+
+    if df is None or len(df) < 20:
+        send_telegram(f"⚠️ *Data Error:* Gagal mendapatkan data valid untuk {symbol}")
         return
 
-    signal_text, emoji, data = check_ema_cross(df)
+    # Technical Indicators
+    df['ema8'] = calculate_ema(df['close'], 8)
+    df['ema14'] = calculate_ema(df['close'], 14)
     
-    message = (
-        f"{emoji} *TRADING UPDATE: {symbol}*\n"
-        f"⏰ `{datetime.now().strftime('%H:%M:%S')} UTC`\n\n"
-        f"💰 Harga: `${data['close']:,.2f}`\n"
-        f"📈 EMA 8: `{data['ema_8']:,.2f}`\n"
-        f"📉 EMA 14: `{data['ema_14']:,.2f}`\n\n"
-        f"🚨 *Status:* {signal_text}\n\n"
-        f"--- _Phase 1 Active_"
+    # Get Last 2 Rows
+    curr, prev = df.iloc[-1], df.iloc[-2]
+    
+    # Crossover Logic
+    status = "MONITORING"
+    if prev['ema8'] <= prev['ema14'] and curr['ema8'] > curr['ema14']:
+        status = "🟢 POTENSI BUY (Golden Cross)"
+    elif prev['ema8'] >= prev['ema14'] and curr['ema8'] < curr['ema14']:
+        status = "🔴 POTENSI SELL (Death Cross)"
+
+    # Support & Resistance (Recent 20 periods)
+    s_level = df['low'].tail(20).min()
+    r_level = df['high'].tail(20).max()
+
+    # Construct Message
+    msg = (
+        f"🤖 *MT5 SIGNAL: {symbol}*\n"
+        f"⏰ `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC`\n\n"
+        f"💰 Price: `${curr['close']:,.2f}`\n"
+        f"📈 EMA 8/14: `{curr['ema8']:,.2f}` / `{curr['ema14']:,.2f}`\n"
+        f"🛡️ S/R: `${s_level:,.2f}` / `${r_level:,.2f}`\n\n"
+        f"🚨 *Status:* {status}\n"
+        f"---"
     )
     
-    send_telegram(message)
-    print(f"  📣 Sinyal {symbol}: {signal_text}")
+    send_telegram(msg)
+
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
 
 def main():
-    print("🚀 Bot Trading Dimulai...")
-    assets = ["BTCUSDT", "ETHUSDT"]
+    start_time = time.time()
+    print("🚀 MT5 Trading Bot Started")
     
+    assets = ["BTCUSD", "ETHUSD"]
     for asset in assets:
         analyze_market(asset)
     
-    print("✅ Selesai.")
+    end_time = time.time()
+    print(f"\n✅ Selesai dalam {end_time - start_time:.2f} detik.")
 
 if __name__ == "__main__":
     main()
+    

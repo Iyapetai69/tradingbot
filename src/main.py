@@ -1,7 +1,10 @@
+import os
+import time
+import json
 import requests
 import pandas as pd
 import numpy as np
-import time
+import google.generativeai as genai
 from datetime import datetime
 
 # ==========================================
@@ -9,11 +12,11 @@ from datetime import datetime
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = ""  # Untuk Fase 2
+GEMINI_API_KEY = "AIzaSyDoCZj4aJGifLHjaV8jC2Y3dljcUEIZ2yc"
 
 KUCOIN_API = "https://api.kucoin.com/api/v1/market/candles"
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'User-Agent': 'Mozilla/5.0',
     'Accept': 'application/json'
 }
 
@@ -25,20 +28,18 @@ SYMBOL_MAPPING = {
 }
 
 # ==========================================
-# FUNGSI UTILITY & API
+# FUNGSI UTILITAS & DATA
 # ==========================================
 
 def parse_symbol_kucoin(symbol):
-    """Konversi symbol MT5 ke format KuCoin USDT."""
+    """Konversi symbol MT5 ke format KuCoin USDT"""
     return SYMBOL_MAPPING.get(symbol, f"{symbol[:3]}-USDT")
 
 def get_crypto_data(symbol, interval='5min', limit=50):
-    """Mengambil data OHLCV dari KuCoin API dengan sistem retry."""
+    """Mengambil dan membersihkan data OHLCV dari KuCoin"""
     kucoin_symbol = parse_symbol_kucoin(symbol)
-    
-    # Perbaikan Logika Waktu
     end_time = int(time.time())
-    start_time = end_time - (limit * 5 * 60) 
+    start_time = end_time - (limit * 5 * 60)
     
     params = {
         'symbol': kucoin_symbol,
@@ -47,121 +48,155 @@ def get_crypto_data(symbol, interval='5min', limit=50):
         'endAt': end_time
     }
     
-    max_retries = 3
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
-            print(f"  📡 Request {kucoin_symbol} (Attempt {attempt + 1})...")
-            response = requests.get(KUCOIN_API, params=params, headers=HEADERS, timeout=15)
+            print(f"  📡 Fetching {kucoin_symbol} (Attempt {attempt + 1})...")
+            resp = requests.get(KUCOIN_API, params=params, headers=HEADERS, timeout=15)
             
-            if response.status_code != 200:
-                print(f"  ❌ HTTP {response.status_code}: {response.text[:100]}")
+            if resp.status_code != 200:
                 time.sleep(2 ** attempt)
                 continue
-            
-            data = response.json()
-            if data.get('code') != '200000':
-                print(f"  ❌ KuCoin Error: {data.get('msg')}")
+                
+            data = resp.json()
+            if data.get('code') != '200000' or not data.get('data'):
                 return None
             
-            candles = data.get('data', [])
-            if not candles:
-                return None
-            
-            # [0:time, 1:open, 2:close, 3:high, 4:low, 5:volume, 6:turnover]
-            df = pd.DataFrame(candles, columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+            # Load ke DataFrame
+            df = pd.DataFrame(data['data'], columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
             
             # Konversi tipe data
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+            cols = ['open', 'high', 'low', 'close', 'volume']
+            df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
-            # Sort ascending & clean
+            # Urutkan dari candle terlama ke terbaru
             df = df.sort_values('time').reset_index(drop=True)
-            df = df.dropna(subset=['close'])
-            
-            print(f"  ✅ Received {len(df)} candles for {symbol}")
-            return df
+            return df.dropna(subset=['close'])
             
         except Exception as e:
-            print(f"  ❌ Error: {type(e).__name__} - {e}")
+            print(f"  ❌ Fetch Error: {e}")
             time.sleep(2 ** attempt)
             
     return None
 
-def send_telegram(message):
-    """Kirim notifikasi ke Telegram."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        res = requests.post(url, json=payload, timeout=10)
-        return res.json().get('ok')
-    except Exception as e:
-        print(f"  ❌ Telegram Fail: {e}")
-        return False
-
 # ==========================================
-# LOGIKA ANALISIS
+# INDIKATOR TEKNIKAL
 # ==========================================
 
 def calculate_indicators(df):
-    """Menghitung semua indikator teknikal yang diperlukan."""
+    """Menghitung semua indikator yang diperlukan dalam satu fungsi"""
+    # EMA
     df['ema_8'] = df['close'].ewm(span=8, adjust=False).mean()
     df['ema_14'] = df['close'].ewm(span=14, adjust=False).mean()
     
-    # ATR (Volatility)
-    df['tr'] = df['high'] - df['low']
-    df['atr'] = df['tr'].rolling(window=14).mean()
+    # ATR
+    df['tr'] = np.maximum(df['high'] - df['low'], 
+                          np.maximum(abs(df['high'] - df['close'].shift(1)), 
+                                     abs(df['low'] - df['close'].shift(1))))
+    atr = df['tr'].rolling(window=14).mean().iloc[-1]
     
-    # Support & Resistance (20 periods)
-    df['support'] = df['low'].rolling(window=20).min()
-    df['resistance'] = df['high'].rolling(window=20).max()
-    
-    return df
+    return df, atr
 
-def analyze_market(symbol):
-    """Alur utama analisis per koin."""
-    print(f"\n🔄 Analyzing {symbol}...")
+# ==========================================
+# ANALISIS AI (GEMINI)
+# ==========================================
+
+def analyze_with_gemini(symbol, current_price, indicators, df):
+    """Analisis mendalam menggunakan Gemini AI"""
+    if not GEMINI_API_KEY or "GANTI" in GEMINI_API_KEY:
+        return None
+    
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Persiapan Data
+        recent_candles = df.tail(5).to_dict('records')
+        prompt = f"""
+        Analyze {symbol} (5m timeframe). 
+        Price: {current_price}, EMA8: {indicators['ema_8']:.2f}, EMA14: {indicators['ema_14']:.2f}, ATR: {indicators['atr']:.2f}.
+        Support: {indicators['support']:.2f}, Resistance: {indicators['res']:.2f}.
+        Last Candles: {recent_candles}
+
+        Provide JSON only:
+        {{
+            "signal_valid": bool, "confidence": 0-100, "action": "BUY/SELL/WAIT",
+            "entry_price": float, "stop_loss": float, "take_profit_1": float, 
+            "take_profit_2": float, "risk_reward_ratio": float, "reasoning": "str", "warnings": []
+        }}
+        """
+        
+        response = model.generate_content(prompt)
+        # Clean JSON String
+        clean_json = response.text.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean_json)
+        
+    except Exception as e:
+        print(f"  ❌ AI Error: {e}")
+        return None
+
+# ==========================================
+# KOMUNIKASI & MAIN LOGIC
+# ==========================================
+
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"❌ Telegram Error: {e}")
+
+def run_analysis(symbol):
+    print(f"\n🔍 Menganalisis {symbol}...")
     df = get_crypto_data(symbol)
     
     if df is None or len(df) < 20:
-        send_telegram(f"⚠️ *Data Error:* Gagal memproses {symbol}")
+        print(f"  ⚠️ Data tidak cukup untuk {symbol}")
         return
 
-    df = calculate_indicators(df)
+    df, atr = calculate_indicators(df)
     
-    # Ambil baris data terbaru
-    curr = df.iloc[-1]
+    # Data Point Terakhir
+    last = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # Logika Crossover EMA
-    signal = "MONITORING"
-    if prev['ema_8'] <= prev['ema_14'] and curr['ema_8'] > curr['ema_14']:
-        signal = "🟢 *POTENSI BUY* (Golden Cross)"
-    elif prev['ema_8'] >= prev['ema_14'] and curr['ema_8'] < curr['ema_14']:
-        signal = "🔴 *POTENSI SELL* (Death Cross)"
+    # Deteksi Cross
+    signal_type = "MONITORING"
+    if prev['ema_8'] <= prev['ema_14'] and last['ema_8'] > last['ema_14']:
+        signal_type = "GOLDEN CROSS (BUY)"
+    elif prev['ema_8'] >= prev['ema_14'] and last['ema_8'] < last['ema_14']:
+        signal_type = "DEATH CROSS (SELL)"
 
-    # Susun Pesan
-    msg = (
-        f"🤖 *MT5 SIGNAL: {symbol}*\n"
-        f"⏰ `{datetime.now().strftime('%H:%M:%S')} UTC` (M5)\n\n"
-        f"💰 Price: `${curr['close']:,.2f}`\n"
-        f"📈 EMA 8/14: `{curr['ema_8']:,.2f}` / `{curr['ema_14']:,.2f}`\n\n"
-        f"🎯 *Key Levels:*\n"
-        f"🔹 Support: `${curr['support']:,.2f}`\n"
-        f"🔹 Resist: `${curr['resistance']:,.2f}`\n"
-        f"🔹 ATR: `${curr['atr']:,.2f}`\n\n"
-        f"🚨 *Status:* {signal}\n\n"
-        f"--- Phase 1 Active ---"
-    )
+    # Meta Data untuk AI
+    indicator_data = {
+        'ema_8': last['ema_8'], 'ema_14': last['ema_14'], 'atr': atr,
+        'support': df['low'].tail(20).min(), 'res': df['high'].tail(20).max()
+    }
+
+    ai_rec = analyze_with_gemini(symbol, last['close'], indicator_data, df)
     
+    # Konstruksi Pesan
+    if ai_rec:
+        status_emoji = "🎯" if ai_rec['confidence'] >= 70 else "⚡"
+        msg = (
+            f"{status_emoji} *AI SIGNAL: {symbol}*\n"
+            f"💰 Price: `{last['close']:,.2f}`\n"
+            f"📊 Action: *{ai_rec['action']}* ({ai_rec['confidence']}%)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📍 Entry: `{ai_rec['entry_price']}`\n"
+            f"🛑 SL: `{ai_rec['stop_loss']}` | ✅ TP: `{ai_rec['take_profit_1']}`\n"
+            f"🧠 Reason: _{ai_rec['reasoning']}_"
+        )
+    else:
+        msg = f"👀 *Update {symbol}*\nPrice: `{last['close']}`\nSignal: {signal_type}"
+
     send_telegram(msg)
+    print(f"  ✅ Selesai: {symbol}")
 
 def main():
-    print("🚀 Bot Started...")
-    assets = ["BTCUSD", "ETHUSD"]
-    for asset in assets:
-        analyze_market(asset)
-    print("\n✅ All tasks finished.")
+    print("🚀 Bot started...")
+    for coin in ["BTCUSD", "ETHUSD"]:
+        run_analysis(coin)
 
 if __name__ == "__main__":
     main()
-    

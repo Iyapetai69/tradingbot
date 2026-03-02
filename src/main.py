@@ -201,7 +201,8 @@ def main():
     print("✅ Selesai.")
 
 if __name__ == "__main__":
-    main()    try:
+    main()    
+    try:
         response = requests.post(url, json=payload, headers=HEADERS, timeout=10)
         result = response.json()
         if result.get('ok'):            

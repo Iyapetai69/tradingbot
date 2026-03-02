@@ -8,262 +8,171 @@ from datetime import datetime
 # ==========================================
 # KONFIGURASI & CREDENTIALS
 # ==========================================
-# Ganti dengan data asli Anda
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = "AIzaSyDoCZj4aJGifLHjaV8jC2Y3dljcUEIZ2yc" 
+GEMINI_API_KEY = "GANTI_DENGAN_API_KEY_GEMINI_ANDA"
+
+# Nama model terbaru sesuai permintaan
+GEMINI_MODEL_NAME = 'gemini-3-flash-preview'
 
 KUCOIN_API = "https://api.kucoin.com/api/v1/market/candles"
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/json'
-}
+HEADERS = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
 
-# Mapping symbol MT5 ke KuCoin
 SYMBOL_MAPPING = {
-    "BTCUSD": "BTC-USDT",
-    "ETHUSD": "ETH-USDT",
-    "BTCUSDT": "BTC-USDT",
-    "ETHUSDT": "ETH-USDT"
+    "BTCUSD": "BTC-USDT", "ETHUSD": "ETH-USDT",
+    "BTCUSDT": "BTC-USDT", "ETHUSDT": "ETH-USDT"
 }
 
-# AI Settings
-AI_TEST_MODE = True
-AI_TEST_TIMEOUT = 30 # dalam detik
+AI_TEST_TIMEOUT = 30
 
-# Load AI Library
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    print("⚠️ Warning: google-generativeai not installed. AI features disabled.")
+    print("⚠️ Warning: google-generativeai not installed.")
 
 # ==========================================
-# FUNGSI UTILITAS (HELPER)
-# ==========================================
-
-def parse_symbol_kucoin(symbol):
-    """Mengubah format simbol ke format KuCoin"""
-    return SYMBOL_MAPPING.get(symbol, f"{symbol[:3]}-USDT")
-
-def calculate_ema(series, period):
-    """Menghitung Exponential Moving Average"""
-    return series.ewm(span=period, adjust=False).mean()
-
-def calculate_atr(df, period=14):
-    """Menghitung Average True Range untuk volatilitas"""
-    df['tr'] = df['high'] - df['low']
-    return df['tr'].iloc[-period:].mean()
-
-# ==========================================
-# DATA FETCHING
+# ANALISIS TEKNIKAL
 # ==========================================
 
 def get_crypto_data(symbol, interval='5min', limit=50):
-    kucoin_symbol = parse_symbol_kucoin(symbol)
+    kucoin_symbol = SYMBOL_MAPPING.get(symbol, f"{symbol[:3]}-USDT")
     end_time = int(time.time())
     start_time = end_time - (limit * 5 * 60)
     
-    params = {
-        'symbol': kucoin_symbol,
-        'type': interval,
-        'startAt': start_time,
-        'endAt': end_time
-    }
+    params = {'symbol': kucoin_symbol, 'type': interval, 'startAt': start_time, 'endAt': end_time}
     
-    for attempt in range(3):
-        try:
-            response = requests.get(KUCOIN_API, params=params, headers=HEADERS, timeout=15)
-            if response.status_code != 200:
-                time.sleep(2 ** attempt)
-                continue
-            
-            data = response.json()
-            if data.get('code') != '200000': return None
-            
-            candles = data.get('data', [])
-            if not candles: return None
-            
-            # Format KuCoin: [time, open, close, high, low, volume, turnover]
-            df = pd.DataFrame(candles, columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+    try:
+        response = requests.get(KUCOIN_API, params=params, headers=HEADERS, timeout=15)
+        data = response.json()
+        if data.get('code') == '200000' and data.get('data'):
+            df = pd.DataFrame(data['data'], columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
-            
-            # Urutkan dari candle terlama ke terbaru
-            df = df.sort_values('time').reset_index(drop=True)
-            return df.dropna(subset=['close'])
-            
-        except Exception as e:
-            print(f"  ❌ Fetch Error {symbol}: {e}")
+            return df.sort_values('time').reset_index(drop=True).dropna()
+    except Exception as e:
+        print(f"  ❌ Error Data {symbol}: {e}")
     return None
 
 # ==========================================
-# AI ENGINE (GEMINI)
+# AI ENGINE (GEMINI 3 FLASH PREVIEW)
 # ==========================================
 
-def test_gemini_ai():
-    """Tes koneksi awal ke Gemini"""
-    if not GEMINI_AVAILABLE or "GANTI" in GEMINI_API_KEY:
-        return False, 0, "❌ API Key atau Library belum siap"
-    
-    start_time = time.time()
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-3-flash-preview')
-        
-        prompt = "Respond ONLY with this JSON: {\"status\": \"ok\"}"
-        # Gunakan request_options untuk setting timeout
-        response = model.generate_content(prompt, request_options={'timeout': AI_TEST_TIMEOUT})
-        
-        res_time = round(time.time() - start_time, 2)
-        return True, res_time, "✅ AI Connected & Working"
-    except Exception as e:
-        return False, round(time.time() - start_time, 2), f"❌ AI Error: {str(e)[:50]}"
-
-def analyze_with_gemini(symbol, current_price, ema_data, signal, levels, atr, df):
-    """Analisis mendalam menggunakan AI"""
+def analyze_with_gemini(symbol, current_price, indicators, df):
     if not GEMINI_AVAILABLE or "GANTI" in GEMINI_API_KEY:
         return None
     
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
         
-        recent_candles = df.iloc[-5:].to_dict('records')
+        # Ringkasan data untuk efisiensi token
+        recent_candles = df.iloc[-10:].to_dict('records')
         
         prompt = f"""
-        Anda adalah analis trading profesional. Analisis pair {symbol} pada timeframe M5.
-        Harga: ${current_price}
-        Indikator: EMA8={ema_data['ema8']:.2f}, EMA14={ema_data['ema14']:.2f}
-        Sinyal Deteksi: {signal}
-        Support: {levels['sup']:.2f}, Resistance: {levels['res']:.2f}, ATR: {atr:.2f}
+        Role: Professional Crypto Scalper.
+        Pair: {symbol} (M5 Timeframe).
+        Price: {current_price}
+        Technical: EMA8={indicators['ema8']:.2f}, EMA14={indicators['ema14']:.2f}, ATR={indicators['atr']:.2f}
+        Signal: {indicators['signal']}
+        History: {recent_candles}
         
-        Data 5 candle terakhir: {recent_candles}
+        Task: 
+        Evaluate if the signal is valid. Calculate SL and TP. 
+        Return ONLY valid JSON.
         
-        Berikan rekomendasi dalam format JSON SAJA:
+        JSON Structure:
         {{
-            "signal_valid": true/false,
+            "valid": bool,
             "confidence": 0-100,
             "action": "BUY/SELL/WAIT",
-            "entry_price": number,
-            "stop_loss": number,
-            "take_profit_1": number,
-            "take_profit_2": number,
-            "risk_reward_ratio": number,
-            "reasoning": "penjelasan singkat",
-            "warnings": []
+            "entry": number,
+            "sl": number,
+            "tp": number,
+            "rr": number,
+            "logic": "brief reasoning"
         }}
         """
         
         start_t = time.time()
-        response = model.generate_content(prompt, request_options={'timeout': AI_TEST_TIMEOUT})
+        response = model.generate_content(
+            prompt, 
+            request_options={'timeout': AI_TEST_TIMEOUT}
+        )
         
-        # Bersihkan teks dari markdown code block jika ada
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        ai_data = json.loads(clean_text)
-        ai_data['response_time'] = round(time.time() - start_t, 2)
-        return ai_data
+        # Bersihkan response jika AI menyertakan ```json ... ```
+        raw_res = response.text.strip()
+        if "{" in raw_res:
+            raw_res = raw_res[raw_res.find("{"):raw_res.rfind("}")+1]
+            
+        res_json = json.loads(raw_res)
+        res_json['latency'] = round(time.time() - start_t, 2)
+        return res_json
     except Exception as e:
-        print(f"  ❌ AI Analysis Error: {e}")
+        print(f"  ❌ AI Error: {e}")
         return None
 
 # ==========================================
-# NOTIFIKASI & LOGIC
+# MAIN LOGIC
 # ==========================================
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID, 
-        "text": message, 
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"❌ Telegram Error: {e}")
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=10)
+    except: pass
 
-def analyze_market(symbol):
+def run_bot(symbol):
     print(f"🔄 Menganalisis {symbol}...")
     df = get_crypto_data(symbol)
-    
-    if df is None or df.empty:
-        print(f"  ⚠️ Gagal mendapatkan data untuk {symbol}")
-        return
+    if df is None: return
 
-    # Hitung Indikator
-    df['ema_8'] = calculate_ema(df['close'], 8)
-    df['ema_14'] = calculate_ema(df['close'], 14)
-    atr = calculate_atr(df)
+    # Indikator
+    df['ema8'] = df['close'].ewm(span=8, adjust=False).mean()
+    df['ema14'] = df['close'].ewm(span=14, adjust=False).mean()
+    atr = (df['high'] - df['low']).rolling(14).mean().iloc[-1]
     
     last = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # Deteksi Crossover
-    signal = "NEUTRAL"
-    if prev['ema_8'] <= prev['ema_14'] and last['ema_8'] > last['ema_14']:
-        signal = "🟢 GOLDEN CROSS (BUY)"
-    elif prev['ema_8'] >= prev['ema_14'] and last['ema_8'] < last['ema_14']:
-        signal = "🔴 DEATH CROSS (SELL)"
+    signal = "Neutral"
+    if prev['ema8'] <= prev['ema14'] and last['ema8'] > last['ema14']: signal = "Golden Cross (BUY)"
+    elif prev['ema8'] >= prev['ema14'] and last['ema8'] < last['ema14']: signal = "Death Cross (SELL)"
 
-    # AI Recommendation
-    ai_res = analyze_with_gemini(
-        symbol, last['close'], 
-        {'ema8': last['ema_8'], 'ema14': last['ema_14']},
-        signal, 
-        {'sup': df['low'].iloc[-20:].min(), 'res': df['high'].iloc[-20:].max()},
-        atr, df
-    )
+    # AI Analysis
+    ai = analyze_with_gemini(symbol, last['close'], {
+        'ema8': last['ema8'], 'ema14': last['ema14'], 
+        'atr': atr, 'signal': signal
+    }, df)
 
-    # Susun Pesan Telegram
-    if ai_res:
-        conf = ai_res.get('confidence', 0)
-        status_icon = "✅" if conf >= 70 else "⚠️"
-        
+    if ai:
+        icon = "🎯" if ai['valid'] else "⏳"
         msg = f"""
-{status_icon} *AI SIGNAL: {symbol}*
+{icon} *GEMINI 3 FLASH SIGNAL*
+Pair: `{symbol}` | Confidence: `{ai['confidence']}%`
 ━━━━━━━━━━━━━━━━━━━━━━
-💰 Price: `${last['close']:,.2f}`
+🔥 Action: *{ai['action']}*
+💰 Price: `{last['close']}`
 📊 Signal: `{signal}`
-🤖 Confidence: `{conf}%`
-📌 Action: *{ai_res.get('action')}*
 
-📍 Entry: `{ai_res.get('entry_price'):,.2f}`
-🛑 SL: `{ai_res.get('stop_loss'):,.2f}`
-✅ TP 1: `{ai_res.get('take_profit_1'):,.2f}`
-📈 RR Ratio: `1:{ai_res.get('risk_reward_ratio')}`
+📍 Entry: `{ai['entry']}`
+🛑 SL: `{ai['sl']}`
+✅ TP: `{ai['tp']}`
+📈 R/R: `1:{ai['rr']}`
 
-🧠 *Reason:* _{ai_res.get('reasoning')}_
+🧠 *Logic:* _{ai['logic']}_
 ━━━━━━━━━━━━━━━━━━━━━━
-⏱️ AI Latency: `{ai_res.get('response_time')}s`
+⏱️ Latency: `{ai['latency']}s`
 """
-    else:
-        msg = f"👀 *UPDATE {symbol}*\n\nPrice: `${last['close']:,.2f}`\nSignal: {signal}\n\n_(AI sedang tidak tersedia)_"
-
-    send_telegram(msg)
-
-# ==========================================
-# MAIN EXECUTION
-# ==========================================
+        send_telegram(msg)
+        print(f"  ✅ Sent to Telegram.")
 
 def main():
-    print("="*40)
-    print("🚀 BOT TRADING AI DIMULAI")
-    print("="*40)
-    
-    if AI_TEST_MODE:
-        print("🔍 Mengetes koneksi AI...")
-        success, duration, note = test_gemini_ai()
-        print(f"  {note} ({duration}s)")
-        send_telegram(f"🧪 *SYSTEM TEST*\nAI Status: {note}\nLatency: `{duration}s`")
-    
-    coins = ["BTCUSD", "ETHUSD"]
-    for coin in coins:
-        analyze_market(coin)
-    
-    print("\n✅ Selesai.")
+    print(f"🚀 Bot Active with {GEMINI_MODEL_NAME}")
+    for coin in ["BTCUSD", "ETHUSD"]:
+        run_bot(coin)
 
 if __name__ == "__main__":
     main()
+    

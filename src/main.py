@@ -8,6 +8,7 @@ from datetime import datetime
 # ==========================================
 # KONFIGURASI & CREDENTIALS
 # ==========================================
+# Ganti dengan data asli Anda
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
 GEMINI_API_KEY = "AIzaSyDoCZj4aJGifLHjaV8jC2Y3dljcUEIZ2yc" 
@@ -18,6 +19,7 @@ HEADERS = {
     'Accept': 'application/json'
 }
 
+# Mapping symbol MT5 ke KuCoin
 SYMBOL_MAPPING = {
     "BTCUSD": "BTC-USDT",
     "ETHUSD": "ETH-USDT",
@@ -25,9 +27,11 @@ SYMBOL_MAPPING = {
     "ETHUSDT": "ETH-USDT"
 }
 
+# AI Settings
 AI_TEST_MODE = True
-AI_TEST_TIMEOUT = 30 
+AI_TEST_TIMEOUT = 30 # dalam detik
 
+# Load AI Library
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
@@ -40,12 +44,15 @@ except ImportError:
 # ==========================================
 
 def parse_symbol_kucoin(symbol):
+    """Mengubah format simbol ke format KuCoin"""
     return SYMBOL_MAPPING.get(symbol, f"{symbol[:3]}-USDT")
 
 def calculate_ema(series, period):
+    """Menghitung Exponential Moving Average"""
     return series.ewm(span=period, adjust=False).mean()
 
 def calculate_atr(df, period=14):
+    """Menghitung Average True Range untuk volatilitas"""
     df['tr'] = df['high'] - df['low']
     return df['tr'].iloc[-period:].mean()
 
@@ -78,10 +85,12 @@ def get_crypto_data(symbol, interval='5min', limit=50):
             candles = data.get('data', [])
             if not candles: return None
             
+            # Format KuCoin: [time, open, close, high, low, volume, turnover]
             df = pd.DataFrame(candles, columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
             cols = ['open', 'high', 'low', 'close', 'volume']
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             
+            # Urutkan dari candle terlama ke terbaru
             df = df.sort_values('time').reset_index(drop=True)
             return df.dropna(subset=['close'])
             
@@ -101,10 +110,10 @@ def test_gemini_ai():
     start_time = time.time()
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # Diperbarui ke gemini-3-flash-preview
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel('gemini-2.5-flash-lite')
         
         prompt = "Respond ONLY with this JSON: {\"status\": \"ok\"}"
+        # Gunakan request_options untuk setting timeout
         response = model.generate_content(prompt, request_options={'timeout': AI_TEST_TIMEOUT})
         
         res_time = round(time.time() - start_time, 2)
@@ -119,8 +128,7 @@ def analyze_with_gemini(symbol, current_price, ema_data, signal, levels, atr, df
     
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # Diperbarui ke gemini-3-flash-preview
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel('gemini-2.5-flash-lite')
         
         recent_candles = df.iloc[-5:].to_dict('records')
         
@@ -151,6 +159,7 @@ def analyze_with_gemini(symbol, current_price, ema_data, signal, levels, atr, df
         start_t = time.time()
         response = model.generate_content(prompt, request_options={'timeout': AI_TEST_TIMEOUT})
         
+        # Bersihkan teks dari markdown code block jika ada
         clean_text = response.text.replace('```json', '').replace('```', '').strip()
         ai_data = json.loads(clean_text)
         ai_data['response_time'] = round(time.time() - start_t, 2)
@@ -184,6 +193,7 @@ def analyze_market(symbol):
         print(f"  ⚠️ Gagal mendapatkan data untuk {symbol}")
         return
 
+    # Hitung Indikator
     df['ema_8'] = calculate_ema(df['close'], 8)
     df['ema_14'] = calculate_ema(df['close'], 14)
     atr = calculate_atr(df)
@@ -191,12 +201,14 @@ def analyze_market(symbol):
     last = df.iloc[-1]
     prev = df.iloc[-2]
     
+    # Deteksi Crossover
     signal = "NEUTRAL"
     if prev['ema_8'] <= prev['ema_14'] and last['ema_8'] > last['ema_14']:
         signal = "🟢 GOLDEN CROSS (BUY)"
     elif prev['ema_8'] >= prev['ema_14'] and last['ema_8'] < last['ema_14']:
         signal = "🔴 DEATH CROSS (SELL)"
 
+    # AI Recommendation
     ai_res = analyze_with_gemini(
         symbol, last['close'], 
         {'ema8': last['ema_8'], 'ema14': last['ema_14']},
@@ -205,12 +217,13 @@ def analyze_market(symbol):
         atr, df
     )
 
+    # Susun Pesan Telegram
     if ai_res:
         conf = ai_res.get('confidence', 0)
         status_icon = "✅" if conf >= 70 else "⚠️"
         
         msg = f"""
-{status_icon} *AI SIGNAL: {symbol}* (v3-preview)
+{status_icon} *AI SIGNAL: {symbol}*
 ━━━━━━━━━━━━━━━━━━━━━━
 💰 Price: `${last['close']:,.2f}`
 📊 Signal: `{signal}`
@@ -237,14 +250,14 @@ def analyze_market(symbol):
 
 def main():
     print("="*40)
-    print("🚀 BOT TRADING AI (GEMINI 3 FLASH) DIMULAI")
+    print("🚀 BOT TRADING AI DIMULAI")
     print("="*40)
     
     if AI_TEST_MODE:
         print("🔍 Mengetes koneksi AI...")
         success, duration, note = test_gemini_ai()
         print(f"  {note} ({duration}s)")
-        send_telegram(f"🧪 *SYSTEM TEST*\nAI Model: `Gemini 3 Flash Preview`\nStatus: {note}\nLatency: `{duration}s`")
+        send_telegram(f"🧪 *SYSTEM TEST*\nAI Status: {note}\nLatency: `{duration}s`")
     
     coins = ["BTCUSD", "ETHUSD"]
     for coin in coins:
@@ -254,4 +267,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

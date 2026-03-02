@@ -1,9 +1,6 @@
 name: Crypto Trading Bot
 
 on:
-  schedule:
-    # Jalankan setiap 5 menit
-    - cron: '*/5 * * * *'
   workflow_dispatch: # Memungkinkan trigger manual untuk test
 
 jobs:

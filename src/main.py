@@ -118,7 +118,7 @@ def analyze_with_gemini(symbol, current_price, ema_data, signal, levels, atr, df
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         # Diperbarui ke gemini-2.5-flash-lite
-        model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         recent_candles = df.iloc[-5:].to_dict('records')
         

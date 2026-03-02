@@ -1,0 +1,28 @@
+name: Crypto Trading Bot
+
+on:
+  schedule:
+    # Jalankan setiap 5 menit
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Memungkinkan trigger manual untuk test
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Trading Bot
+        # Tidak perlu env secrets karena sudah hardcoded di main.py
+        run: python src/main.py

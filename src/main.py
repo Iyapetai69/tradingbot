@@ -96,7 +96,8 @@ def get_crypto_data(symbol, interval='5m', limit=50):
                 print(f"  ⚠️ Data setelah cleaning kosong")
                 return None
                 
-            print(f"  ✅ Berhasil ambil {len(df)} candle data {symbol}")            return df
+            print(f"  ✅ Berhasil ambil {len(df)} candle data {symbol}")            
+            return df
             
         except requests.exceptions.Timeout:
             print(f"  ⏱️ Timeout (percobaan {attempt + 1})")
@@ -194,7 +195,8 @@ def main():
     print("🚀 Bot Trading Dimulai...")
     coins = ["BTCUSDT", "ETHUSDT"]
     
-    for coin in coins:        analyze_market(coin)
+    for coin in coins:        
+        analyze_market(coin)
     
     print("✅ Selesai.")
 

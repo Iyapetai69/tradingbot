@@ -10,7 +10,7 @@ from datetime import datetime
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = "GANTI_DENGAN_API_KEY_GEMINI_ANDA"
+GEMINI_API_KEY = "AIzaSyDoCZj4aJGifLHjaV8jC2Y3dljcUEIZ2yc"
 
 KUCOIN_API = "https://api.kucoin.com/api/v1/market/candles"
 HEADERS = {

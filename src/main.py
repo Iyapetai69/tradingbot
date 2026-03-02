@@ -1,15 +1,14 @@
-
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
 # ==========================================
-# KONFIGURASI STATIS (JANGAN SHARE FILE INI)
+# KONFIGURASI STATIS - PRIVATE REPO ONLY
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8663293715:AAEO-Hd4Sg6h5oyV1n2oOUy52ILit1cahg4"
 TELEGRAM_CHAT_ID = "7465370442"
-GEMINI_API_KEY = "AIzaSyDoCZj4aJGifLHjaV8jC2Y3dljcUEIZ2yc"
+GEMINI_API_KEY = ""
 
 # Endpoint API Binance (Public & Gratis)
 BINANCE_API = "https://api.binance.com/api/v3/klines"
@@ -25,17 +24,14 @@ def get_crypto_data(symbol, interval='5m', limit=50):
         response = requests.get(BINANCE_API, params=params, timeout=10)
         data = response.json()
         
-        # Binance mengembalikan list of lists, kita konversi ke DataFrame
-        # Kolom: [Open time, Open, High, Low, Close, Volume, ...]
         df = pd.DataFrame(data, columns=['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore'])
         
-        # Konversi tipe data ke numeric
         cols = ['open', 'high', 'low', 'close', 'volume']
         df[cols] = df[cols].astype(float)
         
         return df
     except Exception as e:
-        print(f"Error mengambil data: {e}")
+        print(f"Error mengambil data {symbol}: {e}")
         return None
 
 def calculate_ema(series, period):
@@ -48,18 +44,23 @@ def send_telegram_message(message):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "Markdown"    }
+        "parse_mode": "Markdown"
+    }
     try:
-        requests.post(url, json=payload, timeout=5)
-        print("Pesan berhasil dikirim ke Telegram.")
+        response = requests.post(url, json=payload, timeout=10)        result = response.json()
+        if result.get('ok'):
+            print("✅ Pesan berhasil dikirim ke Telegram.")
+        else:
+            print(f"❌ Telegram API Error: {result}")
     except Exception as e:
-        print(f"Gagal kirim Telegram: {e}")
+        print(f"❌ Gagal kirim Telegram: {e}")
 
 def analyze_market(symbol):
-    print(f"Menganalisis {symbol}...")
+    print(f"🔄 Menganalisis {symbol}...")
     df = get_crypto_data(symbol)
     
     if df is None or df.empty:
+        print(f"⚠️ Data {symbol} kosong atau error")
         return
 
     # Hitung EMA
@@ -95,9 +96,9 @@ def analyze_market(symbol):
 {signal_emoji} *BOT TRADING UPDATE: {symbol}*
 ⏰ Waktu: {datetime.now().strftime('%H:%M:%S')} UTC
 
-📊 *Data Teknikal (Timeframe 5m)*
-Harga Terakhir: `${current_price:,.2f}`
-EMA 8: `{ema_8_now:,.2f}`EMA 14: `{ema_14_now:,.2f}`
+📊 *Data Teknikal (Timeframe 5m)*Harga Terakhir: `${current_price:,.2f}`
+EMA 8: `{ema_8_now:,.2f}`
+EMA 14: `{ema_14_now:,.2f}`
 
 🚨 *Status Signal:* {signal}
 
@@ -108,11 +109,13 @@ _(Fase 2: Integrasi AI Gemini untuk SL/TP)_
     send_telegram_message(message)
 
 def main():
-    # Daftar coin yang dipantau
+    print("🚀 Bot Trading Dimulai...")
     coins = ["BTCUSDT", "ETHUSDT"]
     
     for coin in coins:
         analyze_market(coin)
+    
+    print("✅ Selesai.")
 
 if __name__ == "__main__":
     main()

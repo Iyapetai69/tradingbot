@@ -47,7 +47,8 @@ def send_telegram_message(message):
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, json=payload, timeout=10)        result = response.json()
+        response = requests.post(url, json=payload, timeout=10)        
+        result = response.json()
         if result.get('ok'):
             print("✅ Pesan berhasil dikirim ke Telegram.")
         else:

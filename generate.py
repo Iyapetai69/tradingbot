@@ -21,7 +21,7 @@ def fetch_all_rows():
 
     table = soup.find("div", {
         "class": "table",
-        "title": "Paito SGP"
+        "title": "Paito SDY"
     }).find("table")
 
     rows = table.find_all("tr")[1:]  # skip header

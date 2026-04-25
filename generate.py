@@ -1,154 +1,85 @@
 import requests
 from bs4 import BeautifulSoup
-import json
-import os
 from datetime import datetime
 
 URL = "https://pafimalinauselatan.org/"
-OUTPUT_FILE = "data.json"
 
-HEADERS = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
-CHUNK_SIZE = 5
-TOTAL_COLS = len(HEADERS) * CHUNK_SIZE  # 35
+res = requests.get(URL, timeout=10)
+soup = BeautifulSoup(res.text, "html.parser")
 
+# 🔥 ambil langsung div tabel
+table_div = soup.find("div", {"class": "table", "title": "Paito SDY"})
 
-# =========================
-# FETCH FULL DATA
-# =========================
-def fetch_all_rows():
-    html = requests.get(URL, timeout=10).text
-    soup = BeautifulSoup(html, "html.parser")
+if not table_div:
+    raise Exception("Table tidak ditemukan")
 
-    table = soup.find("div", {
-        "class": "table",
-        "title": "Paito SDY"
-    }).find("table")
+# ambil isi HTML-nya
+table_html = str(table_div)
 
-    rows = table.find_all("tr")[1:]  # skip header
+# ===== BUILD FULL HTML =====
+html = f"""
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Paito SGP</title>
 
-    all_data = []
+<style>
+body {{ font-family: Arial; }}
 
-    for row in rows:
-        cols = [td.text.strip() for td in row.find_all("td")]
+.colormenu {{
+    background: #d9d9d9;
+    border: 2px solid #d9d9d9;
+    width: 796px;
+    height: 30px;
+    max-width: 100%;
+    margin-bottom: 10px;
+}}
 
-        # filter baris valid
-        if len(cols) != TOTAL_COLS:
-            continue
+#drawing-table td {{
+    border:1px solid #d9d9d9;
+    text-align:center;
+    font-size:13px;
+    font-weight:bold;
+    padding:3px 0;
+}}
 
-        # convert ke int
-        try:
-            cols = [int(x) for x in cols]
-        except:
-            continue
+.headd td {{
+    background:#0000f4;
+    color:#fff;
+}}
 
-        all_data.append(cols)
+td.asu {{ background:#fff; }}
+td.asux {{ background:#f4f4f4; }}
+</style>
+</head>
 
-    return all_data
+<body>
 
+<div align="center">
 
-# =========================
-# FETCH LATEST ROW
-# =========================
-def fetch_latest_row():
-    html = requests.get(URL, timeout=10).text
-    soup = BeautifulSoup(html, "html.parser")
+<h2>Paito SGP</h2>
 
-    table = soup.find("div", {
-        "class": "table",
-        "title": "Paito SGP"
-    }).find("table")
+{table_html}
 
-    rows = table.find_all("tr")[1:]
-    latest = rows[0]
+<br>
 
-    cols = [int(td.text.strip()) for td in latest.find_all("td")]
+<form>
+<input placeholder="as">
+<input placeholder="kop">
+<input placeholder="kep">
+<input placeholder="ekr">
+</form>
 
-    if len(cols) != TOTAL_COLS:
-        return None
+</div>
 
-    return cols
+<p>Update: {datetime.now()}</p>
 
+</body>
+</html>
+"""
 
-# =========================
-# LOAD OLD DATA
-# =========================
-def load_old_data():
-    if os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE, "r") as f:
-            return json.load(f)
-    else:
-        return {
-            "updated_at": None,
-            "total_rows": 0,
-            "columns": HEADERS,
-            "chunk_size": CHUNK_SIZE,
-            "data": []
-        }
+with open("index.html", "w", encoding="utf-8") as f:
+    f.write(html)
 
-
-# =========================
-# SAVE DATA
-# =========================
-def save_data(data):
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-# =========================
-# MAIN LOGIC
-# =========================
-def main():
-    db = load_old_data()
-
-    # =====================
-    # FULL SCRAPE (FIRST RUN)
-    # =====================
-    if len(db["data"]) == 0:
-        print("🚀 FULL SCRAPE MODE")
-
-        all_rows = fetch_all_rows()
-
-        db["data"] = all_rows
-        db["total_rows"] = len(all_rows)
-        db["updated_at"] = datetime.utcnow().isoformat()
-
-        save_data(db)
-
-        print(f"✅ Berhasil ambil {len(all_rows)} baris")
-        return
-
-    # =====================
-    # INCREMENTAL UPDATE
-    # =====================
-    print("⚡ INCREMENTAL MODE")
-
-    new_row = fetch_latest_row()
-
-    if not new_row:
-        print("❌ Gagal ambil data terbaru")
-        return
-
-    # cek duplikat
-    if db["data"] and db["data"][0] == new_row:
-        print("⏳ Tidak ada data baru")
-        return
-
-    # insert ke atas
-    db["data"].insert(0, new_row)
-    db["total_rows"] += 1
-    db["updated_at"] = datetime.utcnow().isoformat()
-
-    # limit biar nggak bengkak (opsional)
-    MAX_ROWS = 3000
-    db["data"] = db["data"][:MAX_ROWS]
-
-    save_data(db)
-
-    print("✅ Data baru ditambahkan")
-
-
-# =========================
-# RUN
-# =========================
-if __name__ == "__main__":
-    main()
+print("HTML generated (FULL DIV MODE)!")

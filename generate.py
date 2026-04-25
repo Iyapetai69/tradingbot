@@ -9,26 +9,69 @@ OUTPUT_FILE = "data.json"
 
 HEADERS = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
 CHUNK_SIZE = 5
+TOTAL_COLS = len(HEADERS) * CHUNK_SIZE  # 35
 
 
+# =========================
+# FETCH FULL DATA
+# =========================
+def fetch_all_rows():
+    html = requests.get(URL, timeout=10).text
+    soup = BeautifulSoup(html, "html.parser")
+
+    table = soup.find("div", {
+        "class": "table",
+        "title": "Paito SGP"
+    }).find("table")
+
+    rows = table.find_all("tr")[1:]  # skip header
+
+    all_data = []
+
+    for row in rows:
+        cols = [td.text.strip() for td in row.find_all("td")]
+
+        # filter baris valid
+        if len(cols) != TOTAL_COLS:
+            continue
+
+        # convert ke int
+        try:
+            cols = [int(x) for x in cols]
+        except:
+            continue
+
+        all_data.append(cols)
+
+    return all_data
+
+
+# =========================
+# FETCH LATEST ROW
+# =========================
 def fetch_latest_row():
     html = requests.get(URL, timeout=10).text
     soup = BeautifulSoup(html, "html.parser")
 
     table = soup.find("div", {
         "class": "table",
-        "title": "Paito SDY"
+        "title": "Paito SGP"
     }).find("table")
 
-    rows = table.find_all("tr")[1:]  # skip header
+    rows = table.find_all("tr")[1:]
     latest = rows[0]
 
     cols = [int(td.text.strip()) for td in latest.find_all("td")]
 
-    # flatten row (35 angka)
+    if len(cols) != TOTAL_COLS:
+        return None
+
     return cols
 
 
+# =========================
+# LOAD OLD DATA
+# =========================
 def load_old_data():
     if os.path.exists(OUTPUT_FILE):
         with open(OUTPUT_FILE, "r") as f:
@@ -43,16 +86,49 @@ def load_old_data():
         }
 
 
+# =========================
+# SAVE DATA
+# =========================
 def save_data(data):
     with open(OUTPUT_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 
+# =========================
+# MAIN LOGIC
+# =========================
 def main():
-    new_row = fetch_latest_row()
     db = load_old_data()
 
-    # cek duplikat (bandingin row pertama)
+    # =====================
+    # FULL SCRAPE (FIRST RUN)
+    # =====================
+    if len(db["data"]) == 0:
+        print("🚀 FULL SCRAPE MODE")
+
+        all_rows = fetch_all_rows()
+
+        db["data"] = all_rows
+        db["total_rows"] = len(all_rows)
+        db["updated_at"] = datetime.utcnow().isoformat()
+
+        save_data(db)
+
+        print(f"✅ Berhasil ambil {len(all_rows)} baris")
+        return
+
+    # =====================
+    # INCREMENTAL UPDATE
+    # =====================
+    print("⚡ INCREMENTAL MODE")
+
+    new_row = fetch_latest_row()
+
+    if not new_row:
+        print("❌ Gagal ambil data terbaru")
+        return
+
+    # cek duplikat
     if db["data"] and db["data"][0] == new_row:
         print("⏳ Tidak ada data baru")
         return
@@ -63,7 +139,7 @@ def main():
     db["updated_at"] = datetime.utcnow().isoformat()
 
     # limit biar nggak bengkak (opsional)
-    MAX_ROWS = 10000
+    MAX_ROWS = 3000
     db["data"] = db["data"][:MAX_ROWS]
 
     save_data(db)
@@ -71,5 +147,8 @@ def main():
     print("✅ Data baru ditambahkan")
 
 
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
     main()
